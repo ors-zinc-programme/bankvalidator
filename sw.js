@@ -1,5 +1,5 @@
 // Bank Account Validator - offline shell cache
-const CACHE = "cbd-validator-v3";
+const CACHE = "cbd-validator-v5";
 const SHELL = [
   "validator.html",
   "manifest.webmanifest",
