@@ -19,7 +19,6 @@
   --radius:14px; --shadow:0 1px 3px rgba(15,36,68,.07),0 4px 16px rgba(15,36,68,.06);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-  html,body{max-width:100%;overflow-x:hidden}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased}
 .header{background:var(--navy);position:sticky;top:0;z-index:100;border-bottom:1px solid rgba(255,255,255,.06)}
 .header-inner{max-width:1000px;margin:0 auto;padding:16px 22px;display:flex;align-items:center;gap:12px}
@@ -31,12 +30,33 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
 .badge-install .dot{width:7px;height:7px;border-radius:50%;background:#34d399}
 
 main{max-width:1000px;margin:0 auto;padding:22px;display:grid;gap:16px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow);min-width:0}
 .card-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
 .card-sub{font-size:13px;color:var(--muted);margin-bottom:18px;line-height:1.5}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:640px){.grid2{grid-template-columns:1fr}}
+@media(max-width:640px){
+  main{padding:14px;gap:12px}
+  .card{padding:16px}
+  .header-inner{padding:14px 16px}
+  .card-sub{font-size:12.5px}
+  .btns{gap:10px}
+  .btns .grow{min-width:0}
+  .btn-row-tools button{min-width:0;flex:1 1 44%}
+  /* Transfer list: each row becomes a stacked card — no sideways scrolling */
+  .table-wrap{overflow-x:visible;border:none;border-radius:0;margin-top:10px}
+  table{min-width:0;font-size:14px}
+  thead{display:none}
+  tbody tr{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:10px}
+  tbody tr.unresolved{background:var(--err-bg);border-color:#fecaca}
+  tbody td{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid #f0f3f8;text-align:right;white-space:normal}
+  tbody tr td:last-child{border-bottom:none}
+  td[data-label]::before{content:attr(data-label);font-weight:600;color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;text-align:left;flex:0 0 auto}
+  .narr{max-width:none;text-align:right}
+  td.inserttop,td.empty{display:block;text-align:center;border-bottom:none}
+  tr.inserttop-row{border:1px dashed #cdd8ea;background:#fafcff}
+}
 .field{margin-bottom:0}
 label{display:block;font-size:12.5px;font-weight:500;color:var(--muted);margin-bottom:6px}
 input,select,textarea{width:100%;height:48px;padding:0 14px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:15px;color:var(--ink);background:#fff;transition:border-color .15s,box-shadow .15s;appearance:none;-webkit-appearance:none}
@@ -119,7 +139,8 @@ tr.unresolved{background:var(--err-bg)}
 .inserttop button{height:38px;font-size:13px;background:transparent;color:var(--accent);font-weight:600}
 .editing-tag{display:none;font-size:12px;color:var(--accent);font-weight:600;margin-left:8px}
 .editing-tag.show{display:inline}
-.foot{font-size:11.5px;color:var(--muted);text-align:center;padding:8px 0 30px}
+.foot{font-size:11.5px;color:var(--muted);text-align:center;padding:8px 0 30px;line-height:1.7}
+.foot a{color:var(--accent);text-decoration:none;font-weight:600}
 .cfg-warn{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:12px 15px;border-radius:10px;font-size:13px;line-height:1.5;margin-bottom:4px}
 </style>
 </head>
@@ -132,7 +153,7 @@ tr.unresolved{background:var(--err-bg)}
     </div>
     <div class="header-text">
       <h1>Bank Account Validator</h1>
-      <p>ORS &amp; Zinc Programme</p>
+      <p>Account verification tool</p>
     </div>
     <div class="badge-install" id="install-badge" style="display:none"><span class="dot"></span>Installed</div>
   </div>
@@ -221,13 +242,13 @@ tr.unresolved{background:var(--err-bg)}
       </div>
       <div class="field">
         <label for="def-narration">Narration</label>
-        <textarea id="def-narration" rows="1" placeholder="e.g. Stipend for ZINC-ORS activity"></textarea>
+        <textarea id="def-narration" rows="1" placeholder="e.g. Stipend payment"></textarea>
       </div>
     </div>
     <div class="grid2" style="margin-top:14px">
       <div class="field">
         <label for="def-lga">LGA</label>
-        <input id="def-lga" placeholder="e.g. Bauchi" autocomplete="off">
+        <input id="def-lga" placeholder="e.g. LGA name" autocomplete="off">
       </div>
       <div class="field">
         <label for="def-ward">Ward</label>
@@ -253,7 +274,7 @@ tr.unresolved{background:var(--err-bg)}
     </div>
   </div>
 
-  <div class="foot">Data is saved on this device only. Export the Excel file to share it.</div>
+  <div class="foot">Data is saved on this device only. Export the Excel file to share it.<br>Developed by Ahmad Nasir · <a href="tel:+2348063082186">+234 806 308 2186</a> · <a href="https://wa.me/2348063082186" target="_blank" rel="noopener">WhatsApp</a></div>
 </main>
 
 <script>
@@ -597,16 +618,16 @@ function render(){
       ? '<span class="name-ok">'+esc(r.name)+'</span>'
       : '<span class="name-bad"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Unresolved</span>';
     tr.innerHTML =
-      '<td class="mono">'+(i+1)+'</td>'+
-      '<td>'+nameCell+'</td>'+
-      '<td>'+esc(r.bankName)+'</td>'+
-      '<td class="mono">'+esc(r.bankCode)+'</td>'+
-      '<td class="mono">'+esc(r.accountNo)+'</td>'+
-      '<td class="mono batch-cell">'+esc(b.a)+'</td>'+
-      '<td class="narr batch-cell">'+esc(b.n)+'</td>'+
-      '<td class="batch-cell">'+esc(b.lga)+'</td>'+
-      '<td class="batch-cell">'+esc(b.ward)+'</td>'+
-      '<td><div class="acts">'+
+      '<td class="mono" data-label="S/No">'+(i+1)+'</td>'+
+      '<td data-label="Beneficiary">'+nameCell+'</td>'+
+      '<td data-label="Bank">'+esc(r.bankName)+'</td>'+
+      '<td class="mono" data-label="Code">'+esc(r.bankCode)+'</td>'+
+      '<td class="mono" data-label="Account no">'+esc(r.accountNo)+'</td>'+
+      '<td class="mono batch-cell" data-label="Amount">'+esc(b.a)+'</td>'+
+      '<td class="narr batch-cell" data-label="Narration">'+esc(b.n)+'</td>'+
+      '<td class="batch-cell" data-label="LGA">'+esc(b.lga)+'</td>'+
+      '<td class="batch-cell" data-label="Ward">'+esc(b.ward)+'</td>'+
+      '<td class="acts-cell" data-label="Actions"><div class="acts">'+
         '<button class="iconbtn re" title="Re-resolve" data-re="'+r.id+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>'+
         '<button class="iconbtn ed" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>'+
         '<button class="iconbtn del" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>'+
