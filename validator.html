@@ -145,10 +145,14 @@ tr.unresolved{background:var(--err-bg)}
 .imp-status{display:flex;align-items:center;gap:10px;margin-top:12px;padding:12px 14px;background:#eef4ff;border:1px solid #d6e3ff;border-radius:10px;font-size:14px;color:var(--accent)}
 .imp-unmatched{margin-top:14px;padding:15px;border:1px solid #fde68a;background:#fffbeb;border-radius:12px}
 .imp-unmatched .card-title{margin-bottom:4px}
-.um-row{display:flex;align-items:center;gap:10px;margin-top:9px}
-.um-name{flex:1;min-width:0;font-size:13.5px;font-weight:500;word-break:break-word}
-.um-name small{color:var(--muted);font-weight:400}
-.um-sel{height:40px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit;font-size:14px;padding:0 8px;background:#fff;max-width:190px;flex-shrink:0}
+.um-block{padding:12px 0;border-top:1px solid #fde68a}
+.um-block:first-of-type{border-top:none}
+.um-head{font-size:14px;font-weight:600}
+.um-head small{color:var(--muted);font-weight:400}
+.um-accts{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 8px}
+.um-acct{font-family:'DM Mono',monospace;font-size:12px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:3px 7px}
+.um-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px}
+.um-sel{width:100%;height:42px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit;font-size:14px;padding:0 10px;background:#fff}
 </style>
 </head>
 <body>
@@ -215,6 +219,10 @@ tr.unresolved{background:var(--err-bg)}
       </button>
     </div>
 
+    <div class="field" style="margin:2px 0 10px">
+      <label for="export-name">Download file name</label>
+      <input id="export-name" placeholder="e.g. Alkaleri Payment Validated" autocomplete="off">
+    </div>
     <div class="btn-row-tools">
       <button class="b-ghost" id="btn-import">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
@@ -453,6 +461,7 @@ function bind(){
   $("btn-resolve").addEventListener("click",onResolve);
   $("btn-add").addEventListener("click",onAdd);
   $("btn-export").addEventListener("click",exportXlsx);
+  try{ $("export-name").value=localStorage.getItem("cbd_val_exportname_v1")||""; }catch(e){}
   $("btn-import").addEventListener("click",()=>$("file-input").click());
   $("file-input").addEventListener("change",onImport);
   $("btn-clear").addEventListener("click",onClear);
@@ -664,7 +673,11 @@ function exportXlsx(){
   ws["!cols"]=[{wch:26},{wch:22},{wch:10},{wch:14},{wch:12},{wch:40},{wch:14},{wch:14}];
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Transfers");
   const d=new Date(), pad=n=>String(n).padStart(2,"0");
-  XLSX.writeFile(wb, "transfer-list-"+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+"-"+pad(d.getHours())+pad(d.getMinutes())+".xlsx");
+  let fname=($("export-name").value||"").trim();
+  if(!fname){ const lga=$("def-lga").value.trim(); fname=(lga?lga+" ":"")+"Validated Accounts "+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate()); }
+  fname=fname.replace(/[\\/:*?"<>|]/g,"").replace(/\.xlsx$/i,"").trim()+".xlsx";
+  try{ localStorage.setItem("cbd_val_exportname_v1", $("export-name").value||""); }catch(e){}
+  XLSX.writeFile(wb, fname);
   const pending=list.filter(r=>!r.resolved).length;
   showMsg(pending?"warn":"ok","Excel downloaded."+(pending?(" Note: "+pending+" row(s) still Unresolved — their Beneficiary Name is blank."):""));
 }
@@ -691,9 +704,9 @@ function bankAcronym(name){
 }
 const BANK_ALIASES={
   "gtb":"guaranty trust","gtbank":"guaranty trust","guaranty":"guaranty trust","gt":"guaranty trust",
-  "fcmb":"first city monument","first city":"first city monument",
-  "fbn":"first","firstbank":"first","first":"first bank of",
-  "uba":"united bank for africa",
+  "fcmb":"first city","first city":"first city",
+  "fbn":"first bank","firstbank":"first bank","first":"first bank",
+  "uba":"united bank",
   "opay":"opay","opay digital":"opay",
   "palmpay":"palmpay",
   "moniepoint":"moniepoint","monie":"moniepoint",
@@ -763,18 +776,35 @@ async function batchResolveImported(rows){
   showMsg(ok===rows.length?"ok":"warn", parts.join(" · ")+". Unverified rows show as Unresolved — set their bank below (or edit the row) and they’ll re-resolve. Names always come from the bank, never the file.");
 }
 
+function likelyBanks(spelling, accts){
+  const out=[], seen=new Set();
+  const push=b=>{ if(b&&!seen.has(b[1])){ seen.add(b[1]); out.push(b); } };
+  const norm=normBank(spelling);
+  if(norm){
+    BANKS.map(b=>[b, sim(norm, normBank(b[0]))]).sort((a,b)=>b[1]-a[1]).slice(0,3)
+      .forEach(s=>{ if(s[1]>0.3) push(s[0]); });
+  }
+  if(accts && accts[0]) fallbackCandidates(accts[0]).slice(0,4).forEach(push);
+  return out.slice(0,5);
+}
 function renderUnmatched(){
   const panel=$("imp-unmatched"); const map={};
   list.forEach(r=>{ if(!r.resolved && r.bankRaw){ const k=r.bankRaw.trim(); if(k) (map[k]=map[k]||[]).push(r); } });
   const keys=Object.keys(map);
   if(!keys.length){ panel.style.display="none"; panel.innerHTML=""; return; }
-  let html='<div class="card-title">Fix unmatched banks ('+keys.length+')</div><div class="card-sub">Pick the correct bank for each spelling. It’s remembered for next time, and those rows re-resolve automatically.</div>';
+  let html='<div class="card-title">Fix unmatched banks ('+keys.length+')</div><div class="card-sub">Tap a likely bank (or pick from the full list). It’s remembered for next time, and those rows re-resolve.</div>';
   keys.forEach(k=>{
-    html+='<div class="um-row"><span class="um-name">'+esc(k)+' <small>('+map[k].length+' row'+(map[k].length>1?"s":"")+')</small></span>'+
-      '<select class="um-sel" data-k="'+encodeURIComponent(k)+'"><option value="">Choose bank…</option>'+
-      BANKS.map(b=>'<option value="'+b[1]+'">'+esc(b[0])+'</option>').join("")+'</select></div>';
+    const rows=map[k], accts=rows.map(r=>r.accountNo), likely=likelyBanks(k, accts);
+    html+='<div class="um-block">'+
+      '<div class="um-head">'+esc(k)+' <small>('+rows.length+' row'+(rows.length>1?"s":"")+')</small></div>'+
+      '<div class="um-accts">'+accts.map(a=>'<span class="um-acct">'+esc(a)+'</span>').join("")+'</div>'+
+      '<div class="um-chips">'+likely.map(b=>'<button type="button" class="chip" data-k="'+encodeURIComponent(k)+'" data-code="'+b[1]+'">'+esc(b[0])+'</button>').join("")+'</div>'+
+      '<select class="um-sel" data-k="'+encodeURIComponent(k)+'"><option value="">Or choose from the full bank list…</option>'+
+      BANKS.map(b=>'<option value="'+b[1]+'">'+esc(b[0])+'</option>').join("")+'</select>'+
+      '</div>';
   });
   panel.innerHTML=html; panel.style.display="block";
+  panel.querySelectorAll(".um-chips .chip").forEach(btn=>btn.addEventListener("click",()=>teachBank(decodeURIComponent(btn.dataset.k), btn.dataset.code)));
   panel.querySelectorAll(".um-sel").forEach(sel=>sel.addEventListener("change",()=>teachBank(decodeURIComponent(sel.dataset.k), sel.value)));
 }
 async function teachBank(rawKey,code){
