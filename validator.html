@@ -655,6 +655,7 @@ function render(){
     tr.querySelector(".ed").addEventListener("click",()=>editRow(r.id));
     tr.querySelector(".del").addEventListener("click",()=>deleteRow(r.id));
   });
+  renderUnresolved();
 }
 
 // ---------- export ----------
@@ -663,15 +664,23 @@ function exportXlsx(){
   const b=batchVals();
   const amt = (b.a==="") ? "" : (isNaN(Number(b.a)) ? b.a : Number(b.a));
   const header=["BeneficiaryName","Bank Name","BankCode","AccountNo","Amount","Narration","LGA","Ward"];
-  const rows=list.map(r=>[ r.resolved?r.name:"", r.bankName, String(r.bankCode), String(r.accountNo), amt, b.n, b.lga, b.ward ]);
-  const aoa=[header, ...rows];
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  for(let i=0;i<rows.length;i++){
-    const rcc=XLSX.utils.encode_cell({r:i+1,c:2}); if(ws[rcc]){ws[rcc].t="s";ws[rcc].v=String(rows[i][2]);}
-    const rca=XLSX.utils.encode_cell({r:i+1,c:3}); if(ws[rca]){ws[rca].t="s";ws[rca].v=String(rows[i][3]);}
-  }
-  ws["!cols"]=[{wch:26},{wch:22},{wch:10},{wch:14},{wch:12},{wch:40},{wch:14},{wch:14}];
-  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Transfers");
+  // group rows by their source sheet (manual rows -> "Transfers")
+  const groups={}, order=[];
+  list.forEach(r=>{ const s=(r.sheet && String(r.sheet).trim()) || "Transfers"; if(!groups[s]){ groups[s]=[]; order.push(s); } groups[s].push(r); });
+  const wb=XLSX.utils.book_new();
+  const cleanTab=s=>{ let t=String(s).replace(/[\\/:*?\[\]]/g," ").replace(/\s+/g," ").trim().slice(0,31)||"Sheet1"; return t; };
+  const used=new Set();
+  order.forEach(sname=>{
+    const rows=groups[sname].map(r=>[ r.resolved?r.name:"", r.bankName, String(r.bankCode), String(r.accountNo), amt, b.n, b.lga, b.ward ]);
+    const ws=XLSX.utils.aoa_to_sheet([header, ...rows]);
+    for(let i=0;i<rows.length;i++){
+      const rcc=XLSX.utils.encode_cell({r:i+1,c:2}); if(ws[rcc]){ws[rcc].t="s";ws[rcc].v=String(rows[i][2]);}
+      const rca=XLSX.utils.encode_cell({r:i+1,c:3}); if(ws[rca]){ws[rca].t="s";ws[rca].v=String(rows[i][3]);}
+    }
+    ws["!cols"]=[{wch:26},{wch:22},{wch:10},{wch:14},{wch:12},{wch:40},{wch:14},{wch:14}];
+    let tab=cleanTab(sname), t=tab, k=2; while(used.has(t.toLowerCase())){ t=tab.slice(0,28)+" "+k; k++; } used.add(t.toLowerCase());
+    XLSX.utils.book_append_sheet(wb, ws, t);
+  });
   const d=new Date(), pad=n=>String(n).padStart(2,"0");
   let fname=($("export-name").value||"").trim();
   if(!fname){ const lga=$("def-lga").value.trim(); fname=(lga?lga+" ":"")+"Validated Accounts "+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate()); }
@@ -679,7 +688,8 @@ function exportXlsx(){
   try{ localStorage.setItem("cbd_val_exportname_v1", $("export-name").value||""); }catch(e){}
   XLSX.writeFile(wb, fname);
   const pending=list.filter(r=>!r.resolved).length;
-  showMsg(pending?"warn":"ok","Excel downloaded."+(pending?(" Note: "+pending+" row(s) still Unresolved — their Beneficiary Name is blank."):""));
+  const tabs=order.length;
+  showMsg(pending?"warn":"ok","Excel downloaded"+(tabs>1?(" — "+tabs+" tabs, one per sheet"):"")+"."+(pending?(" Note: "+pending+" row(s) still Unresolved — their Beneficiary Name is blank."):""));
 }
 
 // ---------- import (smart, always verified) ----------
@@ -769,7 +779,7 @@ async function batchResolveImported(rows){
     await sleep(120);
   }
   save(); render(); status.style.display="none";
-  renderUnmatched();
+  renderUnresolved();
   const parts=["Verified "+ok+" of "+rows.length];
   if(un) parts.push(un+" not found");
   if(rev) parts.push(rev+" matched more than one bank");
@@ -787,36 +797,41 @@ function likelyBanks(spelling, accts){
   if(accts && accts[0]) fallbackCandidates(accts[0]).slice(0,4).forEach(push);
   return out.slice(0,5);
 }
-function renderUnmatched(){
-  const panel=$("imp-unmatched"); const map={};
-  list.forEach(r=>{ if(!r.resolved && r.bankRaw){ const k=r.bankRaw.trim(); if(k) (map[k]=map[k]||[]).push(r); } });
-  const keys=Object.keys(map);
-  if(!keys.length){ panel.style.display="none"; panel.innerHTML=""; return; }
-  let html='<div class="card-title">Fix unmatched banks ('+keys.length+')</div><div class="card-sub">Tap a likely bank (or pick from the full list). It’s remembered for next time, and those rows re-resolve.</div>';
-  keys.forEach(k=>{
-    const rows=map[k], accts=rows.map(r=>r.accountNo), likely=likelyBanks(k, accts);
+function renderUnresolved(){
+  const panel=$("imp-unmatched");
+  const un=list.filter(r=>!r.resolved);
+  if(!un.length){ panel.style.display="none"; panel.innerHTML=""; return; }
+  let html='<div class="card-title">Unresolved accounts ('+un.length+')</div><div class="card-sub">Tap a likely bank (the number is checked against each) or pick from the full list. Fixing one row also fixes others written the same way.</div>';
+  un.forEach(r=>{
+    const likely=likelyBanks(r.bankRaw||r.bankName||"", [r.accountNo]);
+    const cur=(r.bankName||r.bankRaw||"").trim();
     html+='<div class="um-block">'+
-      '<div class="um-head">'+esc(k)+' <small>('+rows.length+' row'+(rows.length>1?"s":"")+')</small></div>'+
-      '<div class="um-accts">'+accts.map(a=>'<span class="um-acct">'+esc(a)+'</span>').join("")+'</div>'+
-      '<div class="um-chips">'+likely.map(b=>'<button type="button" class="chip" data-k="'+encodeURIComponent(k)+'" data-code="'+b[1]+'">'+esc(b[0])+'</button>').join("")+'</div>'+
-      '<select class="um-sel" data-k="'+encodeURIComponent(k)+'"><option value="">Or choose from the full bank list…</option>'+
-      BANKS.map(b=>'<option value="'+b[1]+'">'+esc(b[0])+'</option>').join("")+'</select>'+
+      '<div class="um-head"><span class="um-acct">'+esc(r.accountNo)+'</span>'+(cur?' <small>'+esc(cur)+'</small>':'')+'</div>'+
+      '<div class="um-chips">'+likely.map(b=>'<button type="button" class="chip" data-id="'+r.id+'" data-code="'+b[1]+'">'+esc(b[0])+'</button>').join("")+'</div>'+
+      '<select class="um-sel" data-id="'+r.id+'"><option value="">Or choose from the full bank list…</option>'+
+      BANKS.map(b=>'<option value="'+b[1]+'"'+(b[1]===r.bankCode?' selected':'')+'>'+esc(b[0])+'</option>').join("")+'</select>'+
       '</div>';
   });
   panel.innerHTML=html; panel.style.display="block";
-  panel.querySelectorAll(".um-chips .chip").forEach(btn=>btn.addEventListener("click",()=>teachBank(decodeURIComponent(btn.dataset.k), btn.dataset.code)));
-  panel.querySelectorAll(".um-sel").forEach(sel=>sel.addEventListener("change",()=>teachBank(decodeURIComponent(sel.dataset.k), sel.value)));
+  panel.querySelectorAll(".um-chips .chip").forEach(btn=>btn.addEventListener("click",()=>fixRowBank(btn.dataset.id, btn.dataset.code)));
+  panel.querySelectorAll(".um-sel").forEach(sel=>sel.addEventListener("change",()=>fixRowBank(sel.dataset.id, sel.value)));
 }
-async function teachBank(rawKey,code){
+async function fixRowBank(id, code){
   if(!code) return;
-  saveAlias(normBank(rawKey),code);
-  const bn=bankNameFromCode(code);
-  const affected=list.filter(r=>!r.resolved && r.bankRaw && r.bankRaw.trim()===rawKey);
-  affected.forEach(r=>{ r.bankCode=code; r.bankName=bn; r.review=null; });
-  save(); render();
-  const status=$("imp-status"); status.style.display="flex"; let i=0;
-  for(const r of affected){ status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Resolving '+(++i)+' / '+affected.length+' …'; try{ r.name=await resolveCached(r.accountNo,code); r.resolved=true; }catch(e){} save(); render(); await sleep(120); }
-  status.style.display="none"; renderUnmatched();
+  const r=list.find(x=>x.id===id); if(!r) return;
+  const raw=(r.bankRaw||"").trim();
+  r.bankCode=code; r.bankName=bankNameFromCode(code); r.review=null;
+  if(raw) saveAlias(normBank(raw), code);
+  const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Resolving…';
+  try{ r.name=await resolveCached(r.accountNo, code); r.resolved=true; }
+  catch(e){ showMsg("err","Couldn’t resolve "+esc(r.accountNo)+" at "+esc(r.bankName)+" — try another bank."); }
+  if(raw){
+    const nraw=normBank(raw);
+    const sibs=list.filter(x=>x!==r && !x.resolved && x.bankRaw && normBank(x.bankRaw)===nraw);
+    let i=0;
+    for(const s of sibs){ status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Same spelling: resolving '+(++i)+' / '+sibs.length+' …'; s.bankCode=code; s.bankName=bankNameFromCode(code); try{ s.name=await resolveCached(s.accountNo, code); s.resolved=true; }catch(e){} await sleep(120); }
+  }
+  status.style.display="none"; save(); render();
 }
 
 function onImport(ev){
@@ -824,27 +839,30 @@ function onImport(ev){
   $("file-input").value="";
   const reader=new FileReader();
   reader.onload=async e=>{
-    const imported=[];
+    const imported=[]; let wbSheets=1;
     try{
       const wb=XLSX.read(e.target.result,{type:"array"});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:""});
-      rows.forEach(row=>{
-        const get=(...keys)=>{ for(const kk2 of Object.keys(row)){ const kk=kk2.toLowerCase().replace(/[^a-z0-9]/g,""); if(keys.includes(kk)) return String(row[kk2]).trim(); } return ""; };
-        const accountNo=normalizeDigits(get("accountno","accountnumber","acctno","account","acct","nuban")).slice(0,10);
-        if(!accountNo) return;
-        const rawName=get("bankname","bank"), rawCode=get("bankcode","code");
-        let code="",bankName="";
-        if(/^\d{3,6}$/.test(rawCode) && BANKS.find(x=>x[1]===rawCode)){ code=rawCode; bankName=bankNameFromCode(code); }
-        else { const m=matchBank(rawName||rawCode); if(m){ code=m[1]; bankName=m[0]; } }
-        const bankRaw=(rawName||rawCode||"").trim();
-        const rec={ id:uid(), name:"", resolved:false, bankRaw:bankRaw, bankCode:code, bankName:bankName||bankRaw, accountNo:accountNo };
-        list.push(rec); imported.push(rec);
+      wbSheets = wb.SheetNames.length;
+      wb.SheetNames.forEach(sheetName=>{
+        const ws=wb.Sheets[sheetName];
+        const rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:""});
+        rows.forEach(row=>{
+          const get=(...keys)=>{ for(const kk2 of Object.keys(row)){ const kk=kk2.toLowerCase().replace(/[^a-z0-9]/g,""); if(keys.includes(kk)) return String(row[kk2]).trim(); } return ""; };
+          const accountNo=normalizeDigits(get("accountno","accountnumber","acctno","account","acct","nuban")).slice(0,10);
+          if(!accountNo) return;
+          const rawName=get("bankname","bank"), rawCode=get("bankcode","code");
+          let code="",bankName="";
+          if(/^\d{3,6}$/.test(rawCode) && BANKS.find(x=>x[1]===rawCode)){ code=rawCode; bankName=bankNameFromCode(code); }
+          else { const m=matchBank(rawName||rawCode); if(m){ code=m[1]; bankName=m[0]; } }
+          const bankRaw=(rawName||rawCode||"").trim();
+          const rec={ id:uid(), name:"", resolved:false, bankRaw:bankRaw, bankCode:code, bankName:bankName||bankRaw, accountNo:accountNo, sheet: sheetName };
+          list.push(rec); imported.push(rec);
+        });
       });
     }catch(err){ showMsg("err","Could not read that file. Use an .xlsx or .csv."); return; }
     if(!imported.length){ showMsg("warn","No account numbers found. Make sure the file has a column for the account number and one for the bank."); return; }
     save(); render();
-    showMsg("ok","Imported "+imported.length+" row(s) — verifying names against the bank…");
+    showMsg("ok","Imported "+imported.length+" row(s)"+(wbSheets>1?(" across "+wbSheets+" sheets"):"")+" — verifying names against the bank…");
     await batchResolveImported(imported);
   };
   reader.readAsArrayBuffer(file);
