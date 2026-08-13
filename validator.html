@@ -539,7 +539,8 @@ function onAdd(){
   };
 
   if(editingId){
-    const i=list.findIndex(r=>r.id===editingId); if(i>-1) list[i]=rec;
+    const i=list.findIndex(r=>r.id===editingId);
+    if(i>-1){ rec.sheet=list[i].sheet; rec.bankRaw=list[i].bankRaw; list[i]=rec; }
     editingId=null; $("add-label").textContent="Add to list"; $("editing-tag").className="editing-tag";
   } else {
     list.push(rec);
