@@ -1,11 +1,11 @@
 // Bank Account Validator - offline shell cache
-const CACHE = "cbd-validator-v11";
+const CACHE = "cbd-validator-v12";
 const SHELL = [
   "validator.html",
   "manifest.webmanifest",
   "icon-192.png",
   "icon-512.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+  "xlsx.full.min.js",
   "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@500&display=swap"
 ];
 self.addEventListener("install", e => {
