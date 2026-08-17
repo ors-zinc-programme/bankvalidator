@@ -657,7 +657,7 @@ function render(){
   if(list.length===0){
     const tr=document.createElement("tr");
     tr.innerHTML='<td colspan="10" class="empty">No accounts yet.<br>Resolve an account above and tap <b>Add to list</b>, or <b>Import Excel</b> to load a list.</td>';
-    tb.appendChild(tr); return;
+    tb.appendChild(tr); renderUnresolved(); renderSummary(); return;
   }
 
   list.forEach((r,i)=>{
