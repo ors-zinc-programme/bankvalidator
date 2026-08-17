@@ -238,7 +238,8 @@ tr.unresolved{background:var(--err-bg)}
       <input id="export-name" placeholder="e.g. Alkaleri Payment Validated" autocomplete="off">
     </div>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;line-height:1.4">
-      <input type="checkbox" id="track-cols" style="width:16px;height:16px;margin-top:1px;flex-shrink:0"> Add tracking columns (Status · Duplicate) — only needed if you'll re-import this file later to chase up the unresolved ones.
+      <input type="checkbox" id="track-cols" style="width:17px;height:17px;margin-top:1px;flex-shrink:0">
+      <span>Add tracking columns (Status · Duplicate) — <b id="track-state">OFF</b>. Only needed if you'll re-import this file later to chase up the unresolved ones.</span>
     </label>
     <div class="btn-row-tools">
       <button class="b-ghost" id="btn-import">
@@ -264,7 +265,6 @@ tr.unresolved{background:var(--err-bg)}
     <div id="imp-status" class="imp-status" style="display:none"></div>
     <div id="imp-unmatched" class="imp-unmatched" style="display:none"></div>
     <div id="run-summary" class="run-summary" style="display:none"></div>
-    <button class="btn-ghost" id="btn-copysafe" style="display:none;margin-top:10px;width:100%;height:44px;border:1px solid var(--line);border-radius:10px;background:#fff;font-family:inherit;font-weight:600;color:var(--ink);cursor:pointer">Copy list (Excel-safe — keeps leading zeros)</button>
   </div>
 
   <!-- Batch values -->
@@ -480,7 +480,7 @@ function bind(){
   $("btn-resolve").addEventListener("click",onResolve);
   $("btn-add").addEventListener("click",onAdd);
   $("btn-export").addEventListener("click",exportXlsx);
-  $("btn-copysafe").addEventListener("click",copyExcelSafe);
+  $("track-cols").addEventListener("change",()=>{ $("track-state").textContent=$("track-cols").checked?"ON":"OFF"; });
   try{ $("export-name").value=localStorage.getItem("cbd_val_exportname_v1")||""; }catch(e){}
   $("btn-import").addEventListener("click",()=>$("file-input").click());
   $("file-input").addEventListener("change",onImport);
@@ -540,33 +540,39 @@ function onResolve(){
 }
 
 // ---------- add / update ----------
-function onAdd(){
+async function onAdd(){
   const acct=$("acct").value, code=$("bank").value;
   hideMsg();
   if(acct.length!==10){ showMsg("err","Enter exactly 10 digits."); return; }
   if(!code){ showMsg("err","Select the bank first — tap a Suggested bank or pick it from the full list."); return; }
 
-  const dup = list.find(r=>r.accountNo===acct && r.bankCode===code && r.id!==editingId);
-  if(dup){ if(!confirm("This account is already in the list. Add it again?")) return; }
+  const dupChk = list.find(r=>r.accountNo===acct && r.bankCode===code && r.id!==editingId);
+  if(dupChk){ if(!confirm("This account is already in the list. Add it again?")) return; }
 
-  const rec = {
-    id: editingId || uid(),
-    name: $("acct-name").value || "",
-    resolved: !!$("acct-name").value,
-    bankCode: code,
-    bankName: bankNameFromCode(code) || ($("bank").selectedOptions[0].text||""),
-    accountNo: acct
-  };
+  let name=$("acct-name").value||"", resolved=!!name, orig=null;
+  if(editingId){
+    const i=list.findIndex(r=>r.id===editingId); orig = i>-1?list[i]:null;
+    // If the account or bank changed, the old name can't be trusted — re-verify now.
+    if(!orig || orig.accountNo!==acct || orig.bankCode!==code){
+      const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Re-verifying '+esc(acct)+'…';
+      try{ name=await resolveCached(acct,code); resolved=true; }
+      catch(e){ name=""; resolved=false; }
+      status.style.display="none";
+    }
+  }
+  const rec = { id: editingId || uid(), name, resolved, bankCode:code,
+    bankName: bankNameFromCode(code) || ($("bank").selectedOptions[0]?$("bank").selectedOptions[0].text:"")||"",
+    accountNo: acct, vref: resolved?(acct+"~"+code):"" };
 
   if(editingId){
     const i=list.findIndex(r=>r.id===editingId);
-    if(i>-1){ rec.sheet=list[i].sheet; rec.bankRaw=list[i].bankRaw; list[i]=rec; }
+    if(i>-1){ if(orig){ rec.sheet=orig.sheet; rec.bankRaw=orig.bankRaw; rec.lga=orig.lga; rec.ward=orig.ward; rec.narr=orig.narr; rec.amount=orig.amount; } list[i]=rec; }
     editingId=null; $("add-label").textContent="Add to list"; $("editing-tag").className="editing-tag";
   } else {
     list.push(rec);
   }
-  save(); render(); resetEntry();
-  showMsg(rec.resolved?"ok":"warn", rec.resolved ? "Added to the list." : "Added as <b>Unresolved</b> — resolve it later when you have network.");
+  flagDuplicates(); save(); render(); resetEntry();
+  showMsg(rec.resolved?"ok":"warn", rec.resolved ? "Added — verified name saved." : "Added as <b>Unresolved</b> — that account couldn't be verified; check the number and bank.");
 }
 
 function resetEntry(){
@@ -627,8 +633,12 @@ async function resolveAll(){
 
 function onClear(){
   if(list.length===0){ showMsg("warn","The list is already empty."); return; }
-  if(!confirm("Clear ALL "+list.length+" rows from the list? This cannot be undone.")) return;
-  list=[]; save(); render(); showMsg("ok","List cleared.");
+  if(!confirm("Clear ALL "+list.length+" rows, plus the unresolved list and summary? This cannot be undone.")) return;
+  window.__cancelBatch=true;
+  list=[]; editingId=null; $("add-label").textContent="Add to list"; $("editing-tag").className="editing-tag";
+  $("imp-status").style.display="none"; summaryHidden=false;
+  save(); render(); resetEntry();
+  showMsg("ok","Cleared — list, unresolved and summary all reset.");
 }
 
 // ---------- render ----------
@@ -678,7 +688,6 @@ function render(){
   });
   renderUnresolved();
   renderSummary();
-  $("btn-copysafe").style.display = list.length ? "block" : "none";
 }
 
 // ---------- export ----------
@@ -725,6 +734,7 @@ function exportXlsx(){
 // ---------- import (smart, always verified) ----------
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 const _rcache={};
+let summaryHidden=false;
 async function resolveCached(acct, code){
   const k=code+":"+acct;
   if(_rcache[k]) return _rcache[k];
@@ -797,10 +807,15 @@ async function tryFallback(r){
 }
 
 async function batchResolveImported(rows){
+  window.__cancelBatch=false; summaryHidden=false;
   const status=$("imp-status"); status.style.display="flex";
-  let done=0,ok=0,rev=0,un=0;
+  status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div><span id="imp-status-text" style="flex:1">Verifying…</span><button type="button" id="imp-cancel" style="border:none;background:#fee2e2;color:#991b1b;font-weight:600;border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit">Cancel</button>';
+  const st=$("imp-status-text");
+  $("imp-cancel").addEventListener("click",()=>{ window.__cancelBatch=true; st.textContent="Cancelling…"; });
+  let done=0,ok=0,rev=0,un=0,cancelled=false;
   for(const r of rows){
-    status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Verifying '+(done+1)+' / '+rows.length+' …';
+    if(window.__cancelBatch){ cancelled=true; break; }
+    st.textContent='Verifying '+(done+1)+' / '+rows.length+' …';
     if(r.bankCode){ try{ r.name=await resolveCached(r.accountNo,r.bankCode); r.resolved=true; }catch(e){ await tryFallback(r); } }
     else { await tryFallback(r); }
     if(r.resolved) r.vref=r.accountNo+"~"+r.bankCode;
@@ -810,10 +825,12 @@ async function batchResolveImported(rows){
     await sleep(120);
   }
   flagDuplicates(); save(); render(); status.style.display="none";
+  if(cancelled) return true;   // onImport removes the imported rows
   const parts=["Verified "+ok+" of "+rows.length];
   if(un) parts.push(un+" not found");
   if(rev) parts.push(rev+" matched more than one bank");
   showMsg(ok===rows.length?"ok":"warn", parts.join(" · ")+". Fix any Unresolved in the panel above (you can edit the account number there). Names always come from the bank, never the file.");
+  return false;
 }
 function flagDuplicates(){
   const seen={};
@@ -822,16 +839,17 @@ function flagDuplicates(){
 }
 function renderSummary(){
   const el=$("run-summary"); if(!el) return;
-  if(!list.length){ el.style.display="none"; el.innerHTML=""; return; }
+  if(summaryHidden || !list.length){ el.style.display="none"; el.innerHTML=""; return; }
   const total=list.length, verified=list.filter(r=>r.resolved).length, unresolved=total-verified, dups=list.filter(r=>r.dup).length;
   const bv=batchVals(), byBank={}, byLga={};
   list.forEach(r=>{ if(r.resolved){ const bn=r.bankName||"?"; byBank[bn]=(byBank[bn]||0)+1; } const lg=(r.lga||bv.lga||"—"); byLga[lg]=(byLga[lg]||0)+1; });
   const top=(o,n)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,n).map(([k,v])=>esc(k)+" ("+v+")").join(" · ");
-  el.innerHTML='<div class="card-title">Run summary</div>'+
+  el.innerHTML='<div class="card-title" style="display:flex;justify-content:space-between;align-items:center">Run summary <button type="button" id="sum-close" style="border:none;background:transparent;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:0 2px">&times;</button></div>'+
     '<div class="sum-grid"><div class="sum-b ok">Verified<br><b>'+verified+'</b></div><div class="sum-b warn">Unresolved<br><b>'+unresolved+'</b></div><div class="sum-b err">Duplicate accts<br><b>'+dups+'</b></div></div>'+
     (Object.keys(byBank).length?'<div class="sum-line"><b>By bank:</b> '+top(byBank,6)+'</div>':'')+
     (Object.keys(byLga).length?'<div class="sum-line"><b>By LGA:</b> '+top(byLga,8)+'</div>':'');
   el.style.display="block";
+  const c=$("sum-close"); if(c) c.addEventListener("click",()=>{ summaryHidden=true; el.style.display="none"; });
 }
 
 function likelyBanks(spelling, accts){
@@ -896,24 +914,8 @@ async function fixRowBank(id, code){
   }
   status.style.display="none"; flagDuplicates(); save(); render();
 }
-async function copyExcelSafe(){
-  if(!list.length){ showMsg("warn","Nothing to copy yet."); return; }
-  const b=batchVals();
-  const head=["BeneficiaryName","Bank Name","BankCode","AccountNo","Amount","Narration","LGA","Ward","Status"];
-  const val=r=>[ r.resolved?r.name:"", r.bankName, r.bankCode, r.accountNo, (r.amount||b.a||""), (r.narr||b.n||""), (r.lga||b.lga||""), (r.ward||b.ward||""), r.resolved?"Verified":"Unresolved" ];
-  const htmlRows=list.map(r=>"<tr>"+val(r).map((c,i)=>{ const t=(i===2||i===3)?" style=\"mso-number-format:'@'\"":""; return "<td"+t+">"+esc(String(c))+"</td>"; }).join("")+"</tr>").join("");
-  const html="<table><tr>"+head.map(h=>"<th>"+esc(h)+"</th>").join("")+"</tr>"+htmlRows+"</table>";
-  const tsv=[head.join("\t")].concat(list.map(r=>{ const v=val(r); v[2]='="'+v[2]+'"'; v[3]='="'+v[3]+'"'; return v.join("\t"); })).join("\n");
-  try{
-    if(navigator.clipboard && window.ClipboardItem){
-      await navigator.clipboard.write([ new ClipboardItem({ "text/html":new Blob([html],{type:"text/html"}), "text/plain":new Blob([tsv],{type:"text/plain"}) }) ]);
-      showMsg("ok","Copied "+list.length+" rows — paste into Excel or Sheets; account number and code stay as text (no lost zeros).");
-    } else { throw new Error("noclip"); }
-  }catch(e){
-    const ta=document.createElement("textarea"); ta.value=tsv; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.focus(); ta.select(); try{document.execCommand("copy");}catch(_){}; ta.remove();
-    showMsg("ok","Copied "+list.length+" rows. Paste into Excel \u2014 account & code use =\"\u2026\" so zeros are kept.");
-  }
-}
+async function copyExcelSafe(){ /* removed — download is the single output */ }
+
 
 // ---------- import (multi-column, header anywhere, always verified) ----------
 function repairAcct(s){
@@ -988,7 +990,12 @@ function onImport(ev){
     const toVerify=imported.filter(r=>!r.resolved);
     flagDuplicates(); save(); render();
     showMsg("ok","Imported "+imported.length+" row(s)"+(sheetsUsed>1?(" from "+sheetsUsed+" sheets"):"")+(skipped.length?(" — "+skipped.length+" already verified (skipped)"):"")+". Verifying "+toVerify.length+"…");
-    await batchResolveImported(toVerify);
+    const cancelled=await batchResolveImported(toVerify);
+    if(cancelled){
+      list=list.filter(r=>imported.indexOf(r)<0);
+      window.__cancelBatch=false; flagDuplicates(); save(); render();
+      showMsg("warn","Import cancelled — removed the "+imported.length+" rows from that file. You can import the right one now.");
+    }
   };
   reader.readAsArrayBuffer(file);
 }
