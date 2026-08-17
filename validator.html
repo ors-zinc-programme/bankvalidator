@@ -153,6 +153,20 @@ tr.unresolved{background:var(--err-bg)}
 .um-acct{font-family:'DM Mono',monospace;font-size:12px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:3px 7px}
 .um-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px}
 .um-sel{width:100%;height:42px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit;font-size:14px;padding:0 10px;background:#fff}
+.run-summary{margin-top:14px;padding:15px;border:1px solid #cdd8ea;background:#f7faff;border-radius:12px}
+.sum-grid{display:flex;gap:8px;margin:4px 0 10px}
+.sum-b{flex:1;text-align:center;padding:10px 6px;border-radius:10px;font-size:12px;color:var(--muted);line-height:1.5}
+.sum-b b{font-size:20px;color:var(--ink)}
+.sum-b.ok{background:var(--ok-bg)}.sum-b.ok b{color:var(--ok-text)}
+.sum-b.warn{background:#fffbeb}.sum-b.warn b{color:#92400e}
+.sum-b.err{background:var(--err-bg)}.sum-b.err b{color:var(--err-text)}
+.sum-line{font-size:12px;color:var(--ink);margin-top:6px;line-height:1.6}
+.sum-line b{color:var(--muted)}
+.um-acct-in{font-family:'DM Mono',monospace;font-size:15px;letter-spacing:.04em;width:150px;height:38px;border:1.5px solid var(--line);border-radius:8px;padding:0 10px;background:#fff}
+.um-row2{display:flex;gap:8px;align-items:center}
+.um-row2 .um-sel{flex:1}
+.um-verify{height:42px;padding:0 16px;border:none;border-radius:9px;background:var(--ok);color:#fff;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0}
+.um-verify:hover{background:#047857}
 </style>
 </head>
 <body>
@@ -219,10 +233,14 @@ tr.unresolved{background:var(--err-bg)}
       </button>
     </div>
 
-    <div class="field" style="margin:2px 0 10px">
+    <div class="field" style="margin:2px 0 6px">
       <label for="export-name">Download file name</label>
       <input id="export-name" placeholder="e.g. Alkaleri Payment Validated" autocomplete="off">
     </div>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;line-height:1.4">
+      <input type="checkbox" id="track-cols" style="width:17px;height:17px;margin-top:1px;flex-shrink:0">
+      <span>Add tracking columns (Status · Duplicate) — <b id="track-state">OFF</b>. Only needed if you'll re-import this file later to chase up the unresolved ones.</span>
+    </label>
     <div class="btn-row-tools">
       <button class="b-ghost" id="btn-import">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
@@ -246,6 +264,7 @@ tr.unresolved{background:var(--err-bg)}
     <div class="msg" id="msg"></div>
     <div id="imp-status" class="imp-status" style="display:none"></div>
     <div id="imp-unmatched" class="imp-unmatched" style="display:none"></div>
+    <div id="run-summary" class="run-summary" style="display:none"></div>
   </div>
 
   <!-- Batch values -->
@@ -461,6 +480,7 @@ function bind(){
   $("btn-resolve").addEventListener("click",onResolve);
   $("btn-add").addEventListener("click",onAdd);
   $("btn-export").addEventListener("click",exportXlsx);
+  $("track-cols").addEventListener("change",()=>{ $("track-state").textContent=$("track-cols").checked?"ON":"OFF"; });
   try{ $("export-name").value=localStorage.getItem("cbd_val_exportname_v1")||""; }catch(e){}
   $("btn-import").addEventListener("click",()=>$("file-input").click());
   $("file-input").addEventListener("change",onImport);
@@ -520,33 +540,39 @@ function onResolve(){
 }
 
 // ---------- add / update ----------
-function onAdd(){
+async function onAdd(){
   const acct=$("acct").value, code=$("bank").value;
   hideMsg();
   if(acct.length!==10){ showMsg("err","Enter exactly 10 digits."); return; }
   if(!code){ showMsg("err","Select the bank first — tap a Suggested bank or pick it from the full list."); return; }
 
-  const dup = list.find(r=>r.accountNo===acct && r.bankCode===code && r.id!==editingId);
-  if(dup){ if(!confirm("This account is already in the list. Add it again?")) return; }
+  const dupChk = list.find(r=>r.accountNo===acct && r.bankCode===code && r.id!==editingId);
+  if(dupChk){ if(!confirm("This account is already in the list. Add it again?")) return; }
 
-  const rec = {
-    id: editingId || uid(),
-    name: $("acct-name").value || "",
-    resolved: !!$("acct-name").value,
-    bankCode: code,
-    bankName: bankNameFromCode(code) || ($("bank").selectedOptions[0].text||""),
-    accountNo: acct
-  };
+  let name=$("acct-name").value||"", resolved=!!name, orig=null;
+  if(editingId){
+    const i=list.findIndex(r=>r.id===editingId); orig = i>-1?list[i]:null;
+    // If the account or bank changed, the old name can't be trusted — re-verify now.
+    if(!orig || orig.accountNo!==acct || orig.bankCode!==code){
+      const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Re-verifying '+esc(acct)+'…';
+      try{ name=await resolveCached(acct,code); resolved=true; }
+      catch(e){ name=""; resolved=false; }
+      status.style.display="none";
+    }
+  }
+  const rec = { id: editingId || uid(), name, resolved, bankCode:code,
+    bankName: bankNameFromCode(code) || ($("bank").selectedOptions[0]?$("bank").selectedOptions[0].text:"")||"",
+    accountNo: acct, vref: resolved?(acct+"~"+code):"" };
 
   if(editingId){
     const i=list.findIndex(r=>r.id===editingId);
-    if(i>-1){ rec.sheet=list[i].sheet; rec.bankRaw=list[i].bankRaw; list[i]=rec; }
+    if(i>-1){ if(orig){ rec.sheet=orig.sheet; rec.bankRaw=orig.bankRaw; rec.lga=orig.lga; rec.ward=orig.ward; rec.narr=orig.narr; rec.amount=orig.amount; } list[i]=rec; }
     editingId=null; $("add-label").textContent="Add to list"; $("editing-tag").className="editing-tag";
   } else {
     list.push(rec);
   }
-  save(); render(); resetEntry();
-  showMsg(rec.resolved?"ok":"warn", rec.resolved ? "Added to the list." : "Added as <b>Unresolved</b> — resolve it later when you have network.");
+  flagDuplicates(); save(); render(); resetEntry();
+  showMsg(rec.resolved?"ok":"warn", rec.resolved ? "Added — verified name saved." : "Added as <b>Unresolved</b> — that account couldn't be verified; check the number and bank.");
 }
 
 function resetEntry(){
@@ -607,8 +633,12 @@ async function resolveAll(){
 
 function onClear(){
   if(list.length===0){ showMsg("warn","The list is already empty."); return; }
-  if(!confirm("Clear ALL "+list.length+" rows from the list? This cannot be undone.")) return;
-  list=[]; save(); render(); showMsg("ok","List cleared.");
+  if(!confirm("Clear ALL "+list.length+" rows, plus the unresolved list and summary? This cannot be undone.")) return;
+  window.__cancelBatch=true;
+  list=[]; editingId=null; $("add-label").textContent="Add to list"; $("editing-tag").className="editing-tag";
+  $("imp-status").style.display="none"; summaryHidden=false;
+  save(); render(); resetEntry();
+  showMsg("ok","Cleared — list, unresolved and summary all reset.");
 }
 
 // ---------- render ----------
@@ -627,7 +657,7 @@ function render(){
   if(list.length===0){
     const tr=document.createElement("tr");
     tr.innerHTML='<td colspan="10" class="empty">No accounts yet.<br>Resolve an account above and tap <b>Add to list</b>, or <b>Import Excel</b> to load a list.</td>';
-    tb.appendChild(tr); return;
+    tb.appendChild(tr); renderUnresolved(); renderSummary(); return;
   }
 
   list.forEach((r,i)=>{
@@ -657,28 +687,37 @@ function render(){
     tr.querySelector(".del").addEventListener("click",()=>deleteRow(r.id));
   });
   renderUnresolved();
+  renderSummary();
 }
 
 // ---------- export ----------
 function exportXlsx(){
   if(list.length===0){ showMsg("warn","Nothing to export yet."); return; }
+  flagDuplicates();
   const b=batchVals();
   const amt = (b.a==="") ? "" : (isNaN(Number(b.a)) ? b.a : Number(b.a));
-  const header=["BeneficiaryName","Bank Name","BankCode","AccountNo","Amount","Narration","LGA","Ward"];
-  // group rows by their source sheet (manual rows -> "Transfers")
+  const pick=(v,fb)=> (v!==undefined && v!==null && String(v).trim()!=="") ? v : fb;
+  const track = !!($("track-cols") && $("track-cols").checked);
+  const baseHeader=["BeneficiaryName","Bank Name","BankCode","AccountNo","Amount","Narration","LGA","Ward"];
+  const header = track ? baseHeader.concat(["Status","Duplicate","VerifyRef"]) : baseHeader;
   const groups={}, order=[];
   list.forEach(r=>{ const s=(r.sheet && String(r.sheet).trim()) || "Transfers"; if(!groups[s]){ groups[s]=[]; order.push(s); } groups[s].push(r); });
   const wb=XLSX.utils.book_new();
   const cleanTab=s=>{ let t=String(s).replace(/[\\/:*?\[\]]/g," ").replace(/\s+/g," ").trim().slice(0,31)||"Sheet1"; return t; };
   const used=new Set();
   order.forEach(sname=>{
-    const rows=groups[sname].map(r=>[ r.resolved?r.name:"", r.bankName, String(r.bankCode), String(r.accountNo), amt, b.n, b.lga, b.ward ]);
+    const rows=groups[sname].map(r=>{
+      const base=[ r.resolved?r.name:"", r.bankName, String(r.bankCode), String(r.accountNo),
+        pick(r.amount, amt), pick(r.narr, b.n), pick(r.lga, b.lga), pick(r.ward, b.ward) ];
+      if(track) base.push(r.resolved?"Verified":"Unresolved", r.dup?"DUPLICATE":"", r.resolved?(String(r.accountNo)+"~"+String(r.bankCode)):"");
+      return base;
+    });
     const ws=XLSX.utils.aoa_to_sheet([header, ...rows]);
     for(let i=0;i<rows.length;i++){
       const rcc=XLSX.utils.encode_cell({r:i+1,c:2}); if(ws[rcc]){ws[rcc].t="s";ws[rcc].v=String(rows[i][2]);}
       const rca=XLSX.utils.encode_cell({r:i+1,c:3}); if(ws[rca]){ws[rca].t="s";ws[rca].v=String(rows[i][3]);}
     }
-    ws["!cols"]=[{wch:26},{wch:22},{wch:10},{wch:14},{wch:12},{wch:40},{wch:14},{wch:14}];
+    ws["!cols"]=[{wch:26},{wch:22},{wch:10},{wch:14},{wch:12},{wch:34},{wch:14},{wch:14}].concat(track?[{wch:12},{wch:11},{wch:18}]:[]);
     let tab=cleanTab(sname), t=tab, k=2; while(used.has(t.toLowerCase())){ t=tab.slice(0,28)+" "+k; k++; } used.add(t.toLowerCase());
     XLSX.utils.book_append_sheet(wb, ws, t);
   });
@@ -688,14 +727,14 @@ function exportXlsx(){
   fname=fname.replace(/[\\/:*?"<>|]/g,"").replace(/\.xlsx$/i,"").trim()+".xlsx";
   try{ localStorage.setItem("cbd_val_exportname_v1", $("export-name").value||""); }catch(e){}
   XLSX.writeFile(wb, fname);
-  const pending=list.filter(r=>!r.resolved).length;
-  const tabs=order.length;
-  showMsg(pending?"warn":"ok","Excel downloaded"+(tabs>1?(" — "+tabs+" tabs, one per sheet"):"")+"."+(pending?(" Note: "+pending+" row(s) still Unresolved — their Beneficiary Name is blank."):""));
+  const pending=list.filter(r=>!r.resolved).length, tabs=order.length, dups=list.filter(r=>r.dup).length;
+  showMsg(pending?"warn":"ok","Excel downloaded"+(tabs>1?(" — "+tabs+" tabs"):"")+"."+(pending?(" "+pending+" still Unresolved (blank name)."):"")+(dups?(" "+dups+" duplicate account(s) — see the run summary."):"")+(track?" Re-import this file later to chase only the leftovers.":""));
 }
 
 // ---------- import (smart, always verified) ----------
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 const _rcache={};
+let summaryHidden=false;
 async function resolveCached(acct, code){
   const k=code+":"+acct;
   if(_rcache[k]) return _rcache[k];
@@ -768,23 +807,49 @@ async function tryFallback(r){
 }
 
 async function batchResolveImported(rows){
+  window.__cancelBatch=false; summaryHidden=false;
   const status=$("imp-status"); status.style.display="flex";
-  let done=0,ok=0,rev=0,un=0;
+  status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div><span id="imp-status-text" style="flex:1">Verifying…</span><button type="button" id="imp-cancel" style="border:none;background:#fee2e2;color:#991b1b;font-weight:600;border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit">Cancel</button>';
+  const st=$("imp-status-text");
+  $("imp-cancel").addEventListener("click",()=>{ window.__cancelBatch=true; st.textContent="Cancelling…"; });
+  let done=0,ok=0,rev=0,un=0,cancelled=false;
   for(const r of rows){
-    status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Verifying '+(done+1)+' / '+rows.length+' …';
+    if(window.__cancelBatch){ cancelled=true; break; }
+    st.textContent='Verifying '+(done+1)+' / '+rows.length+' …';
     if(r.bankCode){ try{ r.name=await resolveCached(r.accountNo,r.bankCode); r.resolved=true; }catch(e){ await tryFallback(r); } }
     else { await tryFallback(r); }
+    if(r.resolved) r.vref=r.accountNo+"~"+r.bankCode;
     if(r.resolved) ok++; else if(r.review) rev++; else un++;
     done++;
     if(done%4===0){ save(); render(); }
     await sleep(120);
   }
-  save(); render(); status.style.display="none";
-  renderUnresolved();
+  flagDuplicates(); save(); render(); status.style.display="none";
+  if(cancelled) return true;   // onImport removes the imported rows
   const parts=["Verified "+ok+" of "+rows.length];
   if(un) parts.push(un+" not found");
   if(rev) parts.push(rev+" matched more than one bank");
-  showMsg(ok===rows.length?"ok":"warn", parts.join(" · ")+". Unverified rows show as Unresolved — set their bank below (or edit the row) and they’ll re-resolve. Names always come from the bank, never the file.");
+  showMsg(ok===rows.length?"ok":"warn", parts.join(" · ")+". Fix any Unresolved in the panel above (you can edit the account number there). Names always come from the bank, never the file.");
+  return false;
+}
+function flagDuplicates(){
+  const seen={};
+  list.forEach(r=>{ const a=String(r.accountNo); if(a) seen[a]=(seen[a]||0)+1; });
+  list.forEach(r=>{ r.dup = seen[String(r.accountNo)]>1; });
+}
+function renderSummary(){
+  const el=$("run-summary"); if(!el) return;
+  if(summaryHidden || !list.length){ el.style.display="none"; el.innerHTML=""; return; }
+  const total=list.length, verified=list.filter(r=>r.resolved).length, unresolved=total-verified, dups=list.filter(r=>r.dup).length;
+  const bv=batchVals(), byBank={}, byLga={};
+  list.forEach(r=>{ if(r.resolved){ const bn=r.bankName||"?"; byBank[bn]=(byBank[bn]||0)+1; } const lg=(r.lga||bv.lga||"—"); byLga[lg]=(byLga[lg]||0)+1; });
+  const top=(o,n)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,n).map(([k,v])=>esc(k)+" ("+v+")").join(" · ");
+  el.innerHTML='<div class="card-title" style="display:flex;justify-content:space-between;align-items:center">Run summary <button type="button" id="sum-close" style="border:none;background:transparent;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:0 2px">&times;</button></div>'+
+    '<div class="sum-grid"><div class="sum-b ok">Verified<br><b>'+verified+'</b></div><div class="sum-b warn">Unresolved<br><b>'+unresolved+'</b></div><div class="sum-b err">Duplicate accts<br><b>'+dups+'</b></div></div>'+
+    (Object.keys(byBank).length?'<div class="sum-line"><b>By bank:</b> '+top(byBank,6)+'</div>':'')+
+    (Object.keys(byLga).length?'<div class="sum-line"><b>By LGA:</b> '+top(byLga,8)+'</div>':'');
+  el.style.display="block";
+  const c=$("sum-close"); if(c) c.addEventListener("click",()=>{ summaryHidden=true; el.style.display="none"; });
 }
 
 function likelyBanks(spelling, accts){
@@ -802,69 +867,135 @@ function renderUnresolved(){
   const panel=$("imp-unmatched");
   const un=list.filter(r=>!r.resolved);
   if(!un.length){ panel.style.display="none"; panel.innerHTML=""; return; }
-  let html='<div class="card-title">Unresolved accounts ('+un.length+')</div><div class="card-sub">Tap a likely bank (the number is checked against each) or pick from the full list. Fixing one row also fixes others written the same way.</div>';
+  let html='<div class="card-title">Unresolved accounts ('+un.length+')</div><div class="card-sub">Edit the account number if it’s wrong, tap a likely bank (or pick from the list), then Verify. Fixing one row also fixes others written the same way.</div>';
   un.forEach(r=>{
     const likely=likelyBanks(r.bankRaw||r.bankName||"", [r.accountNo]);
     const cur=(r.bankName||r.bankRaw||"").trim();
     html+='<div class="um-block">'+
-      '<div class="um-head"><span class="um-acct">'+esc(r.accountNo)+'</span>'+(cur?' <small>'+esc(cur)+'</small>':'')+'</div>'+
+      '<div class="um-head"><input class="um-acct-in" data-id="'+r.id+'" value="'+esc(r.accountNo)+'" inputmode="numeric" maxlength="10">'+(cur?' <small>'+esc(cur)+'</small>':'')+'</div>'+
       '<div class="um-chips">'+likely.map(b=>'<button type="button" class="chip" data-id="'+r.id+'" data-code="'+b[1]+'">'+esc(b[0])+'</button>').join("")+'</div>'+
-      '<select class="um-sel" data-id="'+r.id+'"><option value="">Or choose from the full bank list…</option>'+
+      '<div class="um-row2"><select class="um-sel" data-id="'+r.id+'"><option value="">Or choose from the full bank list…</option>'+
       BANKS.map(b=>'<option value="'+b[1]+'"'+(b[1]===r.bankCode?' selected':'')+'>'+esc(b[0])+'</option>').join("")+'</select>'+
+      '<button type="button" class="um-verify" data-id="'+r.id+'">Verify</button></div>'+
       '</div>';
   });
   panel.innerHTML=html; panel.style.display="block";
+  panel.querySelectorAll(".um-acct-in").forEach(inp=>inp.addEventListener("input",()=>{ inp.value=normalizeDigits(inp.value).slice(0,10); }));
   panel.querySelectorAll(".um-chips .chip").forEach(btn=>btn.addEventListener("click",()=>fixRowBank(btn.dataset.id, btn.dataset.code)));
   panel.querySelectorAll(".um-sel").forEach(sel=>sel.addEventListener("change",()=>fixRowBank(sel.dataset.id, sel.value)));
+  panel.querySelectorAll(".um-verify").forEach(btn=>btn.addEventListener("click",()=>verifyRow(btn.dataset.id)));
+}
+function pullAcct(id){ const r=list.find(x=>x.id===id); const inp=document.querySelector('.um-acct-in[data-id="'+id+'"]'); if(r&&inp){ const v=repairAcct(inp.value); if(v) r.accountNo=v; } }
+async function verifyRow(id){
+  const r=list.find(x=>x.id===id); if(!r) return;
+  pullAcct(id);
+  const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Verifying '+esc(r.accountNo)+'…';
+  try{ if(r.bankCode){ r.name=await resolveCached(r.accountNo,r.bankCode); r.resolved=true; } else { await tryFallback(r); } }
+  catch(e){ r.resolved=false; }
+  if(r.resolved){ r.vref=r.accountNo+"~"+r.bankCode; }
+  else if(!r.review){ showMsg("err","Couldn’t verify "+esc(r.accountNo)+" — check the number or pick another bank."); }
+  status.style.display="none"; flagDuplicates(); save(); render();
 }
 async function fixRowBank(id, code){
   if(!code) return;
   const r=list.find(x=>x.id===id); if(!r) return;
+  pullAcct(id);
   const raw=(r.bankRaw||"").trim();
   r.bankCode=code; r.bankName=bankNameFromCode(code); r.review=null;
   if(raw) saveAlias(normBank(raw), code);
-  const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Resolving…';
-  try{ r.name=await resolveCached(r.accountNo, code); r.resolved=true; }
-  catch(e){ showMsg("err","Couldn’t resolve "+esc(r.accountNo)+" at "+esc(r.bankName)+" — try another bank."); }
-  if(raw){
+  const status=$("imp-status"); status.style.display="flex"; status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Verifying…';
+  try{ r.name=await resolveCached(r.accountNo, code); r.resolved=true; r.vref=r.accountNo+"~"+code; }
+  catch(e){ showMsg("err","Couldn’t verify "+esc(r.accountNo)+" at "+esc(r.bankName)+" — try another bank."); }
+  if(raw && r.resolved){
     const nraw=normBank(raw);
     const sibs=list.filter(x=>x!==r && !x.resolved && x.bankRaw && normBank(x.bankRaw)===nraw);
     let i=0;
-    for(const s of sibs){ status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Same spelling: resolving '+(++i)+' / '+sibs.length+' …'; s.bankCode=code; s.bankName=bankNameFromCode(code); try{ s.name=await resolveCached(s.accountNo, code); s.resolved=true; }catch(e){} await sleep(120); }
+    for(const s of sibs){ status.innerHTML='<div class="spin" style="border-color:rgba(37,99,235,.3);border-top-color:#2563eb"></div> Same spelling: resolving '+(++i)+' / '+sibs.length+' …'; s.bankCode=code; s.bankName=bankNameFromCode(code); try{ s.name=await resolveCached(s.accountNo,code); s.resolved=true; s.vref=s.accountNo+"~"+code; }catch(e){} await sleep(120); }
   }
-  status.style.display="none"; save(); render();
+  status.style.display="none"; flagDuplicates(); save(); render();
 }
+async function copyExcelSafe(){ /* removed — download is the single output */ }
 
+
+// ---------- import (multi-column, header anywhere, always verified) ----------
+function repairAcct(s){
+  let d=normalizeDigits(String(s==null?"":s));
+  if(d.length===9) d="0"+d;      // Excel dropped a leading zero
+  if(d.length>10) d=d.slice(0,10);
+  return d;
+}
+function colIndex(headerRow){
+  const H=(headerRow||[]).map(h=>String(h==null?"":h).toLowerCase().replace(/[^a-z0-9]/g,""));
+  const find=(...tests)=>{ for(let i=0;i<H.length;i++){ for(const t of tests){ if(H[i] && t(H[i])) return i; } } return -1; };
+  return {
+    acct:  find(h=>h.includes("accountnumber"), h=>h==="accountno", h=>h==="acct", h=>h==="nuban", h=>(h.includes("account")&&!h.includes("name")&&!h.includes("phone"))),
+    bank:  find(h=>h==="bankname", h=>(h.includes("bank")&&h.includes("name")), h=>h==="bank"),
+    code:  find(h=>h==="bankcode", h=>h==="sortcode", h=>h.includes("sortcode"), h=>h==="code"),
+    name:  find(h=>h.includes("verifiedaccountname"), h=>h.includes("verifiedname"), h=>h==="beneficiaryname", h=>h==="accountname"),
+    status:find(h=>h==="status"),
+    vref:  find(h=>h==="verifyref"||h==="vref"),
+    lga:   find(h=>h==="lga"||(h.includes("lga")&&!h.includes("lgas"))),
+    ward:  find(h=>h==="ward"||h.includes("ward")),
+    narr:  find(h=>h.includes("narration")||h.includes("narrative")),
+    amount:find(h=>h==="amount"||(h.includes("amount")&&!h.includes("total")))
+  };
+}
+function findHeaderRow(aoa){
+  for(let i=0;i<Math.min(aoa.length,40);i++){
+    const ci=colIndex(aoa[i]);
+    if(ci.acct>-1 && (ci.bank>-1||ci.code>-1)) return i;
+  }
+  return -1;
+}
 function onImport(ev){
-  const file=ev.target.files[0]; if(!file) return;
-  $("file-input").value="";
+  const file=ev.target.files[0]; if(!file) return; $("file-input").value="";
   const reader=new FileReader();
   reader.onload=async e=>{
-    const imported=[]; let wbSheets=1;
+    const imported=[], skipped=[]; let sheetsUsed=0;
     try{
       const wb=XLSX.read(e.target.result,{type:"array"});
-      wbSheets = wb.SheetNames.length;
       wb.SheetNames.forEach(sheetName=>{
-        const ws=wb.Sheets[sheetName];
-        const rows=XLSX.utils.sheet_to_json(ws,{raw:false,defval:""});
-        rows.forEach(row=>{
-          const get=(...keys)=>{ for(const kk2 of Object.keys(row)){ const kk=kk2.toLowerCase().replace(/[^a-z0-9]/g,""); if(keys.includes(kk)) return String(row[kk2]).trim(); } return ""; };
-          const accountNo=normalizeDigits(get("accountno","accountnumber","acctno","account","acct","nuban")).slice(0,10);
-          if(!accountNo) return;
-          const rawName=get("bankname","bank"), rawCode=get("bankcode","code");
+        const aoa=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,raw:false,defval:""});
+        const hi=findHeaderRow(aoa); if(hi<0) return;   // not a data sheet
+        sheetsUsed++;
+        const ci=colIndex(aoa[hi]);
+        for(let r=hi+1;r<aoa.length;r++){
+          const row=aoa[r];
+          const accountNo=repairAcct(row[ci.acct]);
+          if(accountNo.length<10) continue;
+          const rawName = ci.bank>-1 ? String(row[ci.bank]||"").trim() : "";
+          const rawCode = ci.code>-1 ? String(row[ci.code]||"").trim() : "";
           let code="",bankName="";
           if(/^\d{3,6}$/.test(rawCode) && BANKS.find(x=>x[1]===rawCode)){ code=rawCode; bankName=bankNameFromCode(code); }
           else { const m=matchBank(rawName||rawCode); if(m){ code=m[1]; bankName=m[0]; } }
           const bankRaw=(rawName||rawCode||"").trim();
-          const rec={ id:uid(), name:"", resolved:false, bankRaw:bankRaw, bankCode:code, bankName:bankName||bankRaw, accountNo:accountNo, sheet: sheetName };
+          const rec={ id:uid(), name:"", resolved:false, bankRaw, bankCode:code, bankName:bankName||bankRaw, accountNo, sheet:sheetName,
+            lga:  ci.lga>-1 ?String(row[ci.lga]||"").trim():"",
+            ward: ci.ward>-1?String(row[ci.ward]||"").trim():"",
+            narr: ci.narr>-1?String(row[ci.narr]||"").trim():"",
+            amount: ci.amount>-1?String(row[ci.amount]||"").trim():"" };
+          // Re-import: trust a "Verified" row only if its stamp still matches this account+bank
+          if(ci.status>-1 && ci.name>-1){
+            const st=String(row[ci.status]||"").toLowerCase();
+            const vname=String(row[ci.name]||"").trim();
+            const vref=ci.vref>-1?String(row[ci.vref]||"").trim():"";
+            const curKey=accountNo+"~"+(code||normBank(bankRaw));
+            if(st.indexOf("verif")>-1 && vname && vref && vref===curKey){ rec.name=vname; rec.resolved=true; rec.vref=curKey; skipped.push(rec); }
+          }
           list.push(rec); imported.push(rec);
-        });
+        }
       });
     }catch(err){ showMsg("err","Could not read that file. Use an .xlsx or .csv."); return; }
-    if(!imported.length){ showMsg("warn","No account numbers found. Make sure the file has a column for the account number and one for the bank."); return; }
-    save(); render();
-    showMsg("ok","Imported "+imported.length+" row(s)"+(wbSheets>1?(" across "+wbSheets+" sheets"):"")+" — verifying names against the bank…");
-    await batchResolveImported(imported);
+    if(!imported.length){ showMsg("warn","No account numbers found. The file needs a Bank column and an Account Number column."); return; }
+    const toVerify=imported.filter(r=>!r.resolved);
+    flagDuplicates(); save(); render();
+    showMsg("ok","Imported "+imported.length+" row(s)"+(sheetsUsed>1?(" from "+sheetsUsed+" sheets"):"")+(skipped.length?(" — "+skipped.length+" already verified (skipped)"):"")+". Verifying "+toVerify.length+"…");
+    const cancelled=await batchResolveImported(toVerify);
+    if(cancelled){
+      list=list.filter(r=>imported.indexOf(r)<0);
+      window.__cancelBatch=false; flagDuplicates(); save(); render();
+      showMsg("warn","Import cancelled — removed the "+imported.length+" rows from that file. You can import the right one now.");
+    }
   };
   reader.readAsArrayBuffer(file);
 }
