@@ -919,10 +919,9 @@ async function copyExcelSafe(){ /* removed — download is the single output */ 
 
 // ---------- import (multi-column, header anywhere, always verified) ----------
 function repairAcct(s){
-  let d=normalizeDigits(String(s==null?"":s));
-  if(d.length===9) d="0"+d;      // Excel dropped a leading zero
-  if(d.length>10) d=d.slice(0,10);
-  return d;
+  // Use the account number EXACTLY as given — never pad or truncate.
+  // A number that isn't exactly 10 digits stays as-is and will show as Unresolved.
+  return normalizeDigits(String(s==null?"":s));
 }
 function colIndex(headerRow){
   const H=(headerRow||[]).map(h=>String(h==null?"":h).toLowerCase().replace(/[^a-z0-9]/g,""));
@@ -962,7 +961,7 @@ function onImport(ev){
         for(let r=hi+1;r<aoa.length;r++){
           const row=aoa[r];
           const accountNo=repairAcct(row[ci.acct]);
-          if(accountNo.length<10) continue;
+          if(!accountNo) continue;   // skip only truly-blank rows; short numbers stay as Unresolved
           const rawName = ci.bank>-1 ? String(row[ci.bank]||"").trim() : "";
           const rawCode = ci.code>-1 ? String(row[ci.code]||"").trim() : "";
           let code="",bankName="";
@@ -987,9 +986,10 @@ function onImport(ev){
       });
     }catch(err){ showMsg("err","Could not read that file. Use an .xlsx or .csv."); return; }
     if(!imported.length){ showMsg("warn","No account numbers found. The file needs a Bank column and an Account Number column."); return; }
-    const toVerify=imported.filter(r=>!r.resolved);
+    const toVerify=imported.filter(r=>!r.resolved && r.accountNo.length===10);
+    const shortCount=imported.filter(r=>r.accountNo.length!==10).length;
     flagDuplicates(); save(); render();
-    showMsg("ok","Imported "+imported.length+" row(s)"+(sheetsUsed>1?(" from "+sheetsUsed+" sheets"):"")+(skipped.length?(" — "+skipped.length+" already verified (skipped)"):"")+". Verifying "+toVerify.length+"…");
+    showMsg("ok","Imported "+imported.length+" row(s)"+(sheetsUsed>1?(" from "+sheetsUsed+" sheets"):"")+(skipped.length?(" — "+skipped.length+" already verified (skipped)"):"")+(shortCount?(" — "+shortCount+" not 10 digits (left Unresolved, not verified)"):"")+". Verifying "+toVerify.length+"…");
     const cancelled=await batchResolveImported(toVerify);
     if(cancelled){
       list=list.filter(r=>imported.indexOf(r)<0);
